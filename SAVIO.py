@@ -8,10 +8,11 @@ import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("SUPABASE_DB_URL")
 
 # Allow this file to import the Brain / pattern modules from the same folder
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -100,15 +101,119 @@ def get_ai_client():
         _gemini_client = genai.Client(api_key=api_key)
     return _gemini_client
 
-#AUTO DATABASE CREATION
-DATABASE_URL = os.getenv("DATABASE_URL")
 
-if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL is not set")
+def _postgres_url(url: str) -> str:
+    """Normalize a Supabase / Postgres URL so psycopg2 can connect over SSL."""
+    if not url:
+        return url
+    # postgres:// is common in older copies of the Supabase URI; psycopg2 wants postgresql://
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    parsed = urlparse(url)
+    query = parse_qs(parsed.query)
+    if "sslmode" not in query:
+        query["sslmode"] = ["require"]
+    return urlunparse(parsed._replace(query=urlencode(query, doseq=True)))
 
 
 def get_connection():
-    return psycopg2.connect(DATABASE_URL)
+    if not DATABASE_URL:
+        raise RuntimeError(
+            "DATABASE_URL is not set. In Supabase: Project Settings → Database → "
+            "URI (use the session or transaction pooler). Put it in your .env as DATABASE_URL."
+        )
+    return psycopg2.connect(_postgres_url(DATABASE_URL))
+
+
+def ensure_column(cursor, table, column, definition):
+    cursor.execute(
+        """
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = %s
+          AND column_name = %s
+        """,
+        (table, column),
+    )
+    if cursor.fetchone() is None:
+        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def init_database():
+    """Create tables and missing columns on the Supabase Postgres database."""
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS members (
+            id SERIAL PRIMARY KEY,
+            firstname TEXT NOT NULL,
+            surname TEXT NOT NULL,
+            number TEXT NOT NULL,
+            surety TEXT NOT NULL,
+            deposite BIGINT NOT NULL DEFAULT 0,
+            status TEXT NOT NULL
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS deposit (
+            id SERIAL PRIMARY KEY,
+            member_id INTEGER NOT NULL REFERENCES members(id),
+            amount BIGINT NOT NULL,
+            type INTEGER DEFAULT 0,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS loan (
+            id SERIAL PRIMARY KEY,
+            member_id INTEGER NOT NULL REFERENCES members(id),
+            amount BIGINT NOT NULL,
+            interest INTEGER NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS welfare (
+            id SERIAL PRIMARY KEY,
+            member_id INTEGER NOT NULL REFERENCES members(id),
+            amount BIGINT NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS fine (
+            id SERIAL PRIMARY KEY,
+            member_id INTEGER NOT NULL REFERENCES members(id),
+            amount BIGINT NOT NULL,
+            reason TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS payment (
+            id SERIAL PRIMARY KEY,
+            member_id INTEGER NOT NULL REFERENCES members(id),
+            payment BIGINT NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+
+    ensure_column(cursor, "deposit", "created_at", "TIMESTAMPTZ DEFAULT NOW()")
+    ensure_column(cursor, "loan", "created_at", "TIMESTAMPTZ DEFAULT NOW()")
+    ensure_column(cursor, "welfare", "created_at", "TIMESTAMPTZ DEFAULT NOW()")
+    ensure_column(cursor, "fine", "created_at", "TIMESTAMPTZ DEFAULT NOW()")
+    ensure_column(cursor, "payment", "created_at", "TIMESTAMPTZ DEFAULT NOW()")
+
+    for _table in ("deposit", "loan", "welfare", "fine", "payment"):
+        cursor.execute(
+            f"UPDATE {_table} SET created_at = NOW() WHERE created_at IS NULL"
+        )
+
+    connection.commit()
+    connection.close()
+
 
 SAVIO = FastAPI()
 
@@ -121,87 +226,13 @@ SAVIO.add_middleware(
     allow_headers=["*"],
 )
 
-# Create the database/table
-connection = sqlite3.connect("SAVIO-database/SAVIO.db")
-cursor = connection.cursor()
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS members (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    firstname TEXT NOT NULL,
-    surname TEXT NOT NULL,
-    number TEXT NOT NULL,
-    surety TEXT NOT NULL,
-    deposite TEXT NOT NULL,
-    status TEXT NOT NULL
-)
-""")
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS deposit(
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    member_id INTEGER NOT NULL,
-    amount INTEGER NOT NULL,
-    type INTEGER DEFAULT 0
-)
-""")
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS loan(
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    member_id INTEGER NOT NULL,
-    amount INTEGER NOT NULL,
-    interest INTEGER NOT NULL
-)
-""")
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS welfare(
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    member_id INTEGER NOT NULL,
-    amount INTEGER NOT NULL
-)
-""")
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS fine(
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    member_id INTEGER NOT NULL,
-    amount INTEGER NOT NULL,
-    reason TEXT
-)
-""")
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS payment(
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    member_id INTEGER NOT NULL,
-    payment INTEGER NOT NULL
-)
-""")
+@SAVIO.on_event("startup")
+def _startup_init_db():
+    # Skip auto-init if the URL is missing so the process can still import.
+    if DATABASE_URL:
+        init_database()
 
-connection.commit()
-connection.close()
-
-def ensure_column(cursor, table, column, definition):
-    cursor.execute(f"PRAGMA table_info({table})")
-    existing = {row[1] for row in cursor.fetchall()}
-    if column not in existing:
-        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
-
-
-connection = sqlite3.connect("SAVIO-database/SAVIO.db")
-cursor = connection.cursor()
-# SQLite won't allow a non-constant default (like datetime('now')) on ADD COLUMN,
-# so the column is added bare - every INSERT below already sets created_at explicitly.
-ensure_column(cursor, "deposit", "created_at", "TEXT")
-ensure_column(cursor, "loan", "created_at", "TEXT")
-ensure_column(cursor, "welfare", "created_at", "TEXT")
-ensure_column(cursor, "fine", "created_at", "TEXT")
-ensure_column(cursor, "payment", "created_at", "TEXT")
-
-# Backfill any pre-existing rows that predate this column (fresh installs have none)
-for _table in ("deposit", "loan", "welfare", "fine", "payment"):
-    cursor.execute(
-        f"UPDATE {_table} SET created_at = datetime('now','localtime') WHERE created_at IS NULL"
-    )
-connection.commit()
-connection.close()
 
 #MAKING AN EXCEPTED INPUTS
 class Member(BaseModel):
@@ -240,10 +271,6 @@ class AskRequest(BaseModel):
     session_id: str = "default"
 
 
-def get_connection():
-    return psycopg2.connect(DATABASE_URL)
-
-
 #COMMUNICATION DECK
 @SAVIO.post("/member")
 def adding_member(member: Member):
@@ -251,27 +278,25 @@ def adding_member(member: Member):
     cursor = connection.cursor()
 
     cursor.execute("""
-    INSERT INTO members (firstname, surname, number, surety, deposite, status)
-    VALUES (%s, %s, %s, %s, %s, %s)
-    RETURNING id
-""", (
-    member.firstname,
-    member.surname,
-    member.number,
-    member.surety,
-    member.deposite,
-    member.status
-))
+        INSERT INTO members (firstname, surname, number, surety, deposite, status)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING id
+    """, (
+        member.firstname,
+        member.surname,
+        member.number,
+        member.surety,
+        member.deposite,
+        member.status
+    ))
 
-member_id = cursor.fetchone()[0]
-
-    member_id = cursor.lastrowid
+    member_id = cursor.fetchone()[0]
 
     # Keep group totals in sync by recording the opening deposit
     if member.deposite:
         cursor.execute("""
             INSERT INTO deposit (member_id, amount, created_at)
-            VALUES (?, ?, datetime('now','localtime'))
+            VALUES (%s, %s, NOW())
         """, (
             member_id,
             member.deposite
@@ -289,14 +314,14 @@ def deposit(member_id: int, deposit: Deposit):
     cursor = connection.cursor()
 
     cursor.execute("""
-    INSERT INTO deposit (member_id, amount, created_at)
-    VALUES (%s, %s, CURRENT_TIMESTAMP)
-""", (
-    member_id,
-    member.deposite
-))
+        INSERT INTO deposit (member_id, amount, created_at)
+        VALUES (%s, %s, NOW())
+    """, (
+        member_id,
+        deposit.amount
+    ))
     cursor.execute("""
-        UPDATE members SET deposite = deposite + ? WHERE id = ?
+        UPDATE members SET deposite = deposite + %s WHERE id = %s
     """, (
         deposit.amount,
         member_id
@@ -314,7 +339,7 @@ def loan(member_id: int, loan: Loan):
     cursor = connection.cursor()
 
     cursor.execute(
-        "SELECT * FROM loan WHERE member_id = ?",
+        "SELECT * FROM loan WHERE member_id = %s",
         (member_id,)
     )
     current_loan = cursor.fetchone()
@@ -324,8 +349,8 @@ def loan(member_id: int, loan: Loan):
         cursor.execute(
             """
             UPDATE loan
-            SET amount = ?, interest = ?
-            WHERE member_id = ?
+            SET amount = %s, interest = %s
+            WHERE member_id = %s
             """,
             (
                 new_amount,
@@ -337,7 +362,7 @@ def loan(member_id: int, loan: Loan):
         cursor.execute(
             """
             INSERT INTO loan (member_id, amount, interest, created_at)
-            VALUES (?, ?, ?, datetime('now','localtime'))
+            VALUES (%s, %s, %s, NOW())
             """,
             (
                 member_id,
@@ -357,7 +382,7 @@ def add_welfare(member_id: int, welfare: Welfare):
     cursor = connection.cursor()
 
     cursor.execute(
-        "SELECT id FROM members WHERE id = ?",
+        "SELECT id FROM members WHERE id = %s",
         (member_id,)
     )
     member = cursor.fetchone()
@@ -367,7 +392,7 @@ def add_welfare(member_id: int, welfare: Welfare):
 
     cursor.execute("""
         INSERT INTO welfare (member_id, amount, created_at)
-        VALUES (?, ?, datetime('now','localtime'))
+        VALUES (%s, %s, NOW())
     """, (
         member_id,
         welfare.amount
@@ -384,7 +409,7 @@ def add_fine(member_id: int, fine: Fine):
     cursor = connection.cursor()
 
     cursor.execute(
-        "SELECT id FROM members WHERE id = ?",
+        "SELECT id FROM members WHERE id = %s",
         (member_id,)
     )
     member = cursor.fetchone()
@@ -394,7 +419,7 @@ def add_fine(member_id: int, fine: Fine):
 
     cursor.execute("""
         INSERT INTO fine (member_id, amount, reason, created_at)
-        VALUES (?, ?, ?, datetime('now','localtime'))
+        VALUES (%s, %s, %s, NOW())
     """, (
         member_id,
         fine.amount,
@@ -416,7 +441,7 @@ def make_payment(member_id: int, payment: Payment):
         return {"message": "payment amount must be greater than 0"}
 
     cursor.execute(
-        "SELECT id FROM members WHERE id = ?",
+        "SELECT id FROM members WHERE id = %s",
         (member_id,)
     )
     member = cursor.fetchone()
@@ -425,7 +450,7 @@ def make_payment(member_id: int, payment: Payment):
         return {"message": "member not found"}
 
     cursor.execute(
-        "SELECT id, amount FROM loan WHERE member_id = ?",
+        "SELECT id, amount FROM loan WHERE member_id = %s",
         (member_id,)
     )
     current_loan = cursor.fetchone()
@@ -443,7 +468,7 @@ def make_payment(member_id: int, payment: Payment):
 
     cursor.execute("""
         INSERT INTO payment(member_id, payment, created_at)
-        VALUES(?, ?, datetime('now','localtime'))
+        VALUES(%s, %s, NOW())
     """, (
         member_id,
         applied
@@ -451,8 +476,8 @@ def make_payment(member_id: int, payment: Payment):
 
     cursor.execute("""
         UPDATE loan
-        SET amount = amount - ?
-        WHERE member_id = ?
+        SET amount = amount - %s
+        WHERE member_id = %s
     """, (
         applied,
         member_id
@@ -481,7 +506,7 @@ def account(member_id: int):
     connection = get_connection()
     cursor = connection.cursor()
     cursor.execute(
-        "SELECT * FROM members WHERE id = ?",
+        "SELECT * FROM members WHERE id = %s",
         (member_id,)
     )
     member = cursor.fetchone()
@@ -494,7 +519,7 @@ def get_loan(member_id: int):
     connection = get_connection()
     cursor = connection.cursor()
     cursor.execute(
-        "SELECT * FROM loan WHERE member_id = ?",
+        "SELECT * FROM loan WHERE member_id = %s",
         (member_id,)
     )
     loan = cursor.fetchone()
@@ -507,7 +532,7 @@ def get_welfare(member_id: int):
     connection = get_connection()
     cursor = connection.cursor()
     cursor.execute(
-        "SELECT COALESCE(SUM(amount), 0) FROM welfare WHERE member_id = ?",
+        "SELECT COALESCE(SUM(amount), 0) FROM welfare WHERE member_id = %s",
         (member_id,)
     )
     total = cursor.fetchone()[0]
@@ -520,7 +545,7 @@ def get_fine(member_id: int):
     connection = get_connection()
     cursor = connection.cursor()
     cursor.execute(
-        "SELECT COALESCE(SUM(amount), 0) FROM fine WHERE member_id = ?",
+        "SELECT COALESCE(SUM(amount), 0) FROM fine WHERE member_id = %s",
         (member_id,)
     )
     total = cursor.fetchone()[0]
@@ -536,7 +561,7 @@ def get_payment(member_id: int):
     cursor.execute("""
         SELECT COALESCE(SUM(payment), 0)
         FROM payment
-        WHERE member_id = ?
+        WHERE member_id = %s
     """, (member_id,))
 
     total = cursor.fetchone()[0]
@@ -634,36 +659,36 @@ def get_records():
 
     cursor.execute("""
         SELECT
-            'savings-' || d.id AS record_id,
+            'savings-' || d.id::text AS record_id,
             d.member_id,
             TRIM(m.firstname || ' ' || m.surname) AS name,
             'savings' AS type,
             d.amount,
-            COALESCE(d.created_at, datetime('now','localtime')) AS created_at
+            COALESCE(d.created_at, NOW()) AS created_at
         FROM deposit d
         JOIN members m ON m.id = d.member_id
 
         UNION ALL
 
         SELECT
-            'loan-' || l.id,
+            'loan-' || l.id::text,
             l.member_id,
             TRIM(m.firstname || ' ' || m.surname),
             'loan',
             l.amount,
-            COALESCE(l.created_at, datetime('now','localtime'))
+            COALESCE(l.created_at, NOW())
         FROM loan l
         JOIN members m ON m.id = l.member_id
 
         UNION ALL
 
         SELECT
-            'interest-' || l.id,
+            'interest-' || l.id::text,
             l.member_id,
             TRIM(m.firstname || ' ' || m.surname),
             'interest',
-            CAST(ROUND(l.amount * l.interest / 100.0) AS INTEGER),
-            COALESCE(l.created_at, datetime('now','localtime'))
+            CAST(ROUND(l.amount * l.interest / 100.0) AS BIGINT),
+            COALESCE(l.created_at, NOW())
         FROM loan l
         JOIN members m ON m.id = l.member_id
         WHERE COALESCE(l.interest, 0) > 0
@@ -671,24 +696,24 @@ def get_records():
         UNION ALL
 
         SELECT
-            'welfare-' || w.id,
+            'welfare-' || w.id::text,
             w.member_id,
             TRIM(m.firstname || ' ' || m.surname),
             'welfare',
             w.amount,
-            COALESCE(w.created_at, datetime('now','localtime'))
+            COALESCE(w.created_at, NOW())
         FROM welfare w
         JOIN members m ON m.id = w.member_id
 
         UNION ALL
 
         SELECT
-            'fine-' || f.id,
+            'fine-' || f.id::text,
             f.member_id,
             TRIM(m.firstname || ' ' || m.surname),
             'fine',
             f.amount,
-            COALESCE(f.created_at, datetime('now','localtime'))
+            COALESCE(f.created_at, NOW())
         FROM fine f
         JOIN members m ON m.id = f.member_id
 
@@ -700,13 +725,14 @@ def get_records():
 
     records = []
     for row in rows:
+        created = row[5]
         records.append({
             "id": row[0],
             "member_id": row[1],
             "name": row[2],
             "type": row[3],
             "amount": row[4],
-            "created_at": row[5]
+            "created_at": created.isoformat() if hasattr(created, "isoformat") else created
         })
 
     return records
@@ -748,11 +774,11 @@ def build_group_context():
     """)
     active_loans = cursor.fetchall()
 
-    seven_days_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+    seven_days_ago = datetime.now() - timedelta(days=7)
     cursor.execute("""
         SELECT m.id, m.firstname, m.surname FROM members m
         WHERE m.id NOT IN (
-            SELECT member_id FROM deposit WHERE created_at >= ?
+            SELECT member_id FROM deposit WHERE created_at >= %s
         )
     """, (seven_days_ago,))
     inactive_members = cursor.fetchall()
@@ -764,10 +790,10 @@ def build_group_context():
     now = datetime.now()
     weekly_trend = []
     for i in range(3, -1, -1):
-        week_start = (now - timedelta(days=7 * (i + 1))).strftime("%Y-%m-%d %H:%M:%S")
-        week_end = (now - timedelta(days=7 * i)).strftime("%Y-%m-%d %H:%M:%S")
+        week_start = now - timedelta(days=7 * (i + 1))
+        week_end = now - timedelta(days=7 * i)
         cursor.execute(
-            "SELECT COALESCE(SUM(amount),0) FROM deposit WHERE created_at >= ? AND created_at < ?",
+            "SELECT COALESCE(SUM(amount),0) FROM deposit WHERE created_at >= %s AND created_at < %s",
             (week_start, week_end)
         )
         weekly_trend.append(cursor.fetchone()[0])
@@ -797,7 +823,7 @@ def build_group_context():
     cursor.execute("""
         SELECT m.id, m.firstname, m.surname, COUNT(*) as fine_count, COALESCE(SUM(f.amount),0) as fine_total
         FROM fine f JOIN members m ON m.id = f.member_id
-        GROUP BY f.member_id
+        GROUP BY m.id, m.firstname, m.surname
         HAVING COUNT(*) >= 2
         ORDER BY fine_count DESC
     """)
@@ -910,17 +936,17 @@ def ai_insight():
     cursor = connection.cursor()
 
     now = datetime.now()
-    this_week_start = (now - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
-    last_week_start = (now - timedelta(days=14)).strftime("%Y-%m-%d %H:%M:%S")
+    this_week_start = now - timedelta(days=7)
+    last_week_start = now - timedelta(days=14)
 
     cursor.execute(
-        "SELECT COALESCE(SUM(amount),0) FROM deposit WHERE created_at >= ?",
+        "SELECT COALESCE(SUM(amount),0) FROM deposit WHERE created_at >= %s",
         (this_week_start,)
     )
     this_week = cursor.fetchone()[0]
 
     cursor.execute(
-        "SELECT COALESCE(SUM(amount),0) FROM deposit WHERE created_at >= ? AND created_at < ?",
+        "SELECT COALESCE(SUM(amount),0) FROM deposit WHERE created_at >= %s AND created_at < %s",
         (last_week_start, this_week_start)
     )
     last_week = cursor.fetchone()[0]
@@ -928,7 +954,7 @@ def ai_insight():
     cursor.execute("""
         SELECT COUNT(*) FROM members m
         WHERE m.id NOT IN (
-            SELECT member_id FROM deposit WHERE created_at >= ?
+            SELECT member_id FROM deposit WHERE created_at >= %s
         )
     """, (this_week_start,))
     inactive_count = cursor.fetchone()[0]
@@ -1005,12 +1031,14 @@ else:
     )
 
 
-def _load_live_brain(db_path: str = "SAVIO-database/SAVIO.db"):
+def _load_live_brain(db_path: str | None = None):
     snap = None
     brief = None
     if BRAIN_AVAILABLE:
         try:
-            snap = load_snapshot(db_path)
+            # Prefer the live Postgres URL. Older brain modules that still expect a
+            # local SQLite file can keep using an explicit path if you pass one.
+            snap = load_snapshot(db_path or DATABASE_URL or "SAVIO-database/SAVIO.db")
         except Exception:
             snap = None
     if PATTERNS_AVAILABLE and snap is not None:
