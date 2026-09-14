@@ -1,5 +1,6 @@
 #IMPORT SECTION
-import sqlite3
+import psycopg2
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -7,6 +8,10 @@ import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Allow this file to import the Brain / pattern modules from the same folder
 sys.path.insert(0, str(Path(__file__).resolve().parent))
