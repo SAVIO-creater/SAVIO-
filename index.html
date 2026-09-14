@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <link rel="stylesheet" href="css/index.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <title>SAVIO</title>
+</head>
+<body>
+
+<section class="homepage">
+  <div class="syntax">
+    <h1 class="tit">SAVIO</h1>
+    <p class="wel">Welcome to SAVIO</p>
+    <p class="text">(Savings Intelligence Organiser)</p>
+  </div>
+  <div class="buttons">
+    <button class="mber_btn"><i class="fa-solid fa-user-plus"></i>ADD MEMBERS</button>
+    <button class="view_btn"><i class="fa-solid fa-list"></i>VIEW MEMBERS</button>
+    <button class="rcds_btn"><i class="fa-solid fa-file"></i>VIEW RECORDS</button>
+    <button class="acnt_btn"><i class="fa-solid fa-wallet"></i>VIEW ACCOUNT</button>
+  </div>
+
+  <div class="savio-ai-card">
+    <div class="savio-ai-head">
+      <div class="savio-ai-avatar"><i class="fa-solid fa-robot"></i></div>
+      <div class="savio-ai-titles">
+        <p class="savio-ai-name">SAVIO AI</p>
+        <p class="savio-ai-sub">Your Group's Financial Assistant</p>
+      </div>
+      <span class="savio-ai-badge"><i class="fa-solid fa-sparkles"></i>Smart • Safe • Helpful</span>
+    </div>
+
+    <div class="savio-ai-actions">
+      <button class="savio-ai-tile openreport">
+        <i class="fa-solid fa-file-invoice"></i>
+        <span class="tile-title">Group Report</span>
+        <span class="tile-sub">View financial summary &amp; insights</span>
+      </button>
+      <button class="savio-ai-tile opensavio">
+        <i class="fa-solid fa-lightbulb"></i>
+        <span class="tile-title">Ask SAVIO</span>
+        <span class="tile-sub">Get answers about your group</span>
+      </button>
+    </div>
+
+    <div class="savio-ai-overview">
+      <p class="savio-ai-panel-title"><i class="fa-solid fa-chart-simple"></i>Group Overview</p>
+      <p class="savio-ai-panel-sub">Current financial position</p>
+      <div class="savio-ai-grid">
+        <div class="savio-ai-stat">
+          <p class="stat-label"><i class="fa-solid fa-piggy-bank"></i>Total Savings</p>
+          <p class="stat-value" id="aiTotalSavings">UGX 0</p>
+        </div>
+        <div class="savio-ai-stat">
+          <p class="stat-label"><i class="fa-solid fa-coins"></i>Available Savings</p>
+          <p class="stat-value" id="aiAvailable">UGX 0</p>
+        </div>
+        <div class="savio-ai-stat">
+          <p class="stat-label"><i class="fa-solid fa-hand-holding-dollar"></i>Total Loan</p>
+          <p class="stat-value" id="aiTotalLoan">UGX 0</p>
+        </div>
+        <div class="savio-ai-stat">
+          <p class="stat-label"><i class="fa-solid fa-shield-halved"></i>Welfare</p>
+          <p class="stat-value" id="aiWelfare">UGX 0</p>
+        </div>
+        <div class="savio-ai-stat">
+          <p class="stat-label"><i class="fa-solid fa-triangle-exclamation"></i>Fines</p>
+          <p class="stat-value" id="aiFines">UGX 0</p>
+        </div>
+        <div class="savio-ai-stat">
+          <p class="stat-label"><i class="fa-solid fa-arrow-trend-up"></i>Interest &amp; Fine Profit</p>
+          <p class="stat-value" id="aiProfit">UGX 0</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="savio-ai-activity">
+      <p class="savio-ai-panel-title"><i class="fa-regular fa-clock"></i>Recent Activity</p>
+      <p class="savio-ai-panel-sub">Latest transactions</p>
+      <div id="aiActivityList" class="savio-ai-activity-list"></div>
+      <button class="savio-ai-viewall rcds_btn_link" type="button"><i class="fa-solid fa-arrow-right"></i>View All Records</button>
+    </div>
+
+    <div class="savio-ai-insight">
+      <div class="savio-ai-insight-icon"><i class="fa-solid fa-lightbulb"></i></div>
+      <div class="savio-ai-insight-text">
+        <p class="savio-ai-panel-title">SAVIO Insight</p>
+        <p id="aiInsightText" class="insight-body">Loading insight...</p>
+      </div>
+      <button class="savio-ai-fullreport-btn openreport" type="button"><i class="fa-solid fa-chart-bar"></i>View Full Report</button>
+    </div>
+  </div>
+
+  <nav class="app-tabbar records-tabbar">
+    <button class="tab-btn is-current" data-go="home" type="button">
+      <i class="fa-solid fa-house"></i>
+      <span>HOME</span>
+    </button>
+    <button class="tab-btn" data-go="add" type="button">
+      <i class="fa-solid fa-user-plus"></i>
+      <span>ADD</span>
+    </button>
+    <button class="tab-btn" data-go="members" type="button">
+      <i class="fa-solid fa-list"></i>
+      <span>MEMBERS</span>
+    </button>
+    <button class="tab-btn" data-go="records" type="button">
+      <i class="fa-solid fa-file-lines"></i>
+      <span>RECORDS</span>
+    </button>
+    <button class="tab-btn" data-go="account" type="button">
+      <i class="fa-solid fa-wallet"></i>
+      <span>ACCOUNT</span>
+    </button>
+  </nav>
+</section>
+
+<section class="form">
+  <div>
+    <form>
+      <h1 class="h1">REGISTER A NEW MEMBER</h1>
+      <p class="ps">Firstname:</p>
+      <input id="firstname" placeholder="Enter Firstname" class="inp" type="text">
+      <p class="ps">Surname:</p>
+      <input id="surname" placeholder="Enter Surname" class="inp" type="text">
+      <p class="ps">PhoneNumber</p>
+      <input id="number" placeholder="EnterMobileMoneyNumber" class="inp" type="text">
+      <p class="ps">Surety:</p>
+      <input id="surety" placeholder="PersonWhoBroughtHim/She" class="inp" type="text">
+      <p class="ps">OpenDeposite</p>
+      <input id="deposite" placeholder="EnterInitialDeposit" type="number">
+      <p class="ps">status:</p>
+      <select id="status" class="status" required>
+        <option value="" disabled selected hidden>Select The Position</option>
+        <option value="MEMBER">MEMBER</option>
+        <option value="PRESIDENT">PRESIDENT</option>
+        <option value="VICE PRESIDENT">VICE PRESIDENT</option>
+        <option value="SECERETARY">SECRETARY</option>
+        <option value="TREASURER">TREASURER</option>
+      </select>
+      <button id="createbtn" class="create"><i class="fa-solid fa-person-circle-plus"></i>CREATE</button>
+      <button class="exist" type="button">CLEAR</button>
+    </form>
+  </div>
+</section>
+
+<section id="viewpaga" class="viewpg">
+  <header class="members-hero">
+    <div class="members-hero-text">
+      <h3 class="h3">MEMBERS</h3>
+      <p class="members-hero-sub">Search, filter and open an account</p>
+    </div>
+    <button class="exit members-home-btn" type="button" aria-label="Back to home">
+      <i class="fa-solid fa-home"></i>
+    </button>
+  </header>
+
+  <div class="members-sheet">
+    <label class="members-search" for="memberSearch">
+      <i class="fa-solid fa-magnifying-glass"></i>
+      <input id="memberSearch" type="search" placeholder="Search name, phone, index..." autocomplete="off">
+    </label>
+
+    <div id="member_filters" class="members-filters">
+      <button class="member-chip is-active" data-filter="all" type="button">All</button>
+      <button class="member-chip" data-filter="MEMBER" type="button">Members</button>
+      <button class="member-chip" data-filter="PRESIDENT" type="button">President</button>
+      <button class="member-chip" data-filter="VICE PRESIDENT" type="button">Vice President</button>
+      <button class="member-chip" data-filter="SECRETARY" type="button">Secretary</button>
+      <button class="member-chip" data-filter="TREASURER" type="button">Treasurer</button>
+    </div>
+
+    <p id="members-count" class="members-count">Loading members...</p>
+    <div id="members-container"></div>
+    <p id="members-empty" class="members-empty">No members found.</p>
+  </div>
+
+  <nav class="app-tabbar records-tabbar">
+    <button class="tab-btn" data-go="home" type="button">
+      <i class="fa-solid fa-house"></i>
+      <span>HOME</span>
+    </button>
+    <button class="tab-btn" data-go="add" type="button">
+      <i class="fa-solid fa-user-plus"></i>
+      <span>ADD</span>
+    </button>
+    <button class="tab-btn is-current" data-go="members" type="button">
+      <i class="fa-solid fa-list"></i>
+      <span>MEMBERS</span>
+    </button>
+    <button class="tab-btn" data-go="records" type="button">
+      <i class="fa-solid fa-file-lines"></i>
+      <span>RECORDS</span>
+    </button>
+    <button class="tab-btn" data-go="account" type="button">
+      <i class="fa-solid fa-wallet"></i>
+      <span>ACCOUNT</span>
+    </button>
+  </nav>
+
+  <template>
+    <button class="cardname">
+      <p class="mberindex"></p>
+      <p class="hostbel">HOST:</p>
+      <p class="mbercard"></p>
+      <p class="balbel">SAVINGS:</p>
+      <p class="mberbalance"></p>
+      <p class="contbel">CONTACT:</p>
+      <p class="mbernumber"></p>
+      <p class="mberstatus"></p>
+    </button>
+  </template>
+</section>
+
+<section id="accountpage">
+  <h4 class="h4">ACCOUNT STATUS REPORT</h4>
+  <div class="accountbutton">
+    <button class="returnbutton">return</button>
+    <button class="depositbtn">Deposit</button>
+    <button class="welfarebtn">Welfare</button>
+    <button class="finebtn">Fines</button>
+    <button class="loanbtn">Loan</button>
+    <button class="paybtn">Pay Loan</button>
+  </div>
+  <div class="hostdiv">
+    <p class="Profile">ACCOUNT PROFILE</p>
+    <p class="Host">Account Holder:</p>
+    <p class="Index">Member Index:</p>
+    <p class="accountindex"></p>
+    <p class="accountname"></p>
+  </div>
+  <div class="overviewdiv">
+    <p class="Overview">SAVINGS OVERVIEW</p>
+    <p class="Savings">TOTAL SAVINGS</p>
+    <p class="accountsavings"></p>
+    <p class="Balance">AVAILABLE BALANCE</p>
+    <p class="AvailableBalance"></p>
+  </div>
+  <div class="loansdiv">
+    <p class="Obligation">OBLIGATIONS AND FINES</p>
+    <p class="Loan">ACCOUNT'S LOAN</p>
+    <p class="accountloan"></p>
+    <p class="Welfare">WELFARE CONTRIBUTION</p>
+    <p class="welfarefee"></p>
+    <p class="Fines">FINES AND PENALTIES</p>
+    <p class="penaltyfee"></p>
+  </div>
+</section>
+
+<section id="depositform">
+  <p>Deposit:</p>
+  <input type="number" id="depositamount" placeholder="Enter The Deposit">
+  <button class="Depositup">UPGRADE</button>
+  <button class="Depositdown">CLEAR</button>
+</section>
+
+<section id="welfareform">
+  <p>Welfare Fee:</p>
+  <input id="WelfareAmount" type="number" placeholder="Insert The Amount">
+  <button class="welfareup">UPGRADE</button>
+  <button class="welfaredown">CLEAR</button>
+</section>
+
+<section id="loanform">
+  <p>Loan:</p>
+  <input id="loanamount" type="number" placeholder="Insert The Amount">
+  <p>Interest:</p>
+  <input id="loanpercent" type="number" placeholder="Insert Interest Percentage">
+  <button class="loanup">UPGRADE</button>
+  <button class="loandown">CLEAR</button>
+</section>
+
+<section id="payform">
+  <p>Pay Loan:</p>
+  <input id="payamount" type="number" placeholder="Insert The Payment">
+  <button class="payup">UPGRADE</button>
+  <button class="paydown">CLEAR</button>
+</section>
+
+<section id="fineform">
+  <p>Fine:</p>
+  <input type="number" placeholder="Insert The Amount">
+  <p>Reason:</p>
+  <textarea placeholder="Note a Reason"></textarea>
+  <button class="fineup">UPGRADE</button>
+  <button class="finedown">CLEAR</button>
+</section>
+
+<section id="accountView">
+  <h5>SAVING GROUP STATUS</h5>
+  <div>
+    <button class="exitacntviw">RETURN</button>
+  </div>
+  <div class="Accountbal">
+    <p>TOTAL SAVINGS</p>
+    <p class="totalsavings"></p>
+    <span class="savingicon fa-solid fa-vault"></span>
+    <span class="dsc1">Recorded Saving Funds</span>
+  </div>
+  <div class="SD-acnt">
+    <div class="Accountavai">
+      <p>AVAILABLE SAVINGS</p>
+      <p class="avaisavings"></p>
+      <span class="icons fa-solid fa-coins">Treasury</span>
+    </div>
+    <div class="Accountloan">
+      <p>TOTAL LOAN</p>
+      <p class="totalloan"></p>
+      <span class="loanicon fa-solid fa-hand-holding-dollar">Debt</span>
+    </div>
+  </div>
+  <div class="SD-acnt2">
+    <div class="Accountwelf">
+      <p>TOTAL WELFARE</p>
+      <p class="totalwelfare"></p>
+      <span class="fa-solid fa-piggy-bank icomwelf">reserved</span>
+    </div>
+    <div class="Accountfine">
+      <p>TOTAL FINES</p>
+      <p class="totalfine"></p>
+      <span class="fineicon fa-solid fa-triangle-exclamation">PENALTIES</span>
+    </div>
+  </div>
+  <div class="Accountprofit">
+    <p>INTEREST &amp; FINE PROFIT</p>
+    <p class="totalprofit"></p>
+    <span class="Interesticon fa-solid fa-money-bill-trend-up">statistics</span>
+  </div>
+
+  <nav class="app-tabbar records-tabbar">
+    <button class="tab-btn" data-go="home" type="button">
+      <i class="fa-solid fa-house"></i>
+      <span>HOME</span>
+    </button>
+    <button class="tab-btn" data-go="add" type="button">
+      <i class="fa-solid fa-user-plus"></i>
+      <span>ADD</span>
+    </button>
+    <button class="tab-btn" data-go="members" type="button">
+      <i class="fa-solid fa-list"></i>
+      <span>MEMBERS</span>
+    </button>
+    <button class="tab-btn" data-go="records" type="button">
+      <i class="fa-solid fa-file-lines"></i>
+      <span>RECORDS</span>
+    </button>
+    <button class="tab-btn is-current" data-go="account" type="button">
+      <i class="fa-solid fa-wallet"></i>
+      <span>ACCOUNT</span>
+    </button>
+  </nav>
+</section>
+
+<section id="RecordView">
+  <header class="records-hero">
+    <div class="records-brand">
+      <div class="handshake-badge" aria-hidden="true">
+        <i class="fa-solid fa-handshake"></i>
+      </div>
+      <div class="records-titles">
+        <h1>SAVIO</h1>
+        <p>Savings Intelligence Organiser</p>
+      </div>
+    </div>
+    <div class="records-tagline">
+      <span>Better Savings<br>Stronger Together</span>
+      <i class="fa-solid fa-leaf"></i>
+    </div>
+  </header>
+
+  <div class="records-sheet">
+    <div class="records-heading">
+      <div class="records-doc-icon">
+        <i class="fa-solid fa-file-lines"></i>
+      </div>
+      <div>
+        <h2>VIEW RECORDS</h2>
+        <p>Financial activity history</p>
+      </div>
+    </div>
+
+    <label class="records-search" for="search">
+      <i class="fa-solid fa-magnifying-glass"></i>
+      <input id="search" type="search" placeholder="Search by member name..." autocomplete="off">
+    </label>
+
+    <div id="search_navi" class="records-filters">
+      <button class="filter-chip is-active" data-filter="all" type="button">All</button>
+      <button class="filter-chip" data-filter="savings" type="button">Savings</button>
+      <button class="filter-chip" data-filter="loan" type="button">Loans</button>
+      <button class="filter-chip" data-filter="fine" type="button">Fines</button>
+      <button class="filter-chip" data-filter="welfare" type="button">Welfare</button>
+      <button class="filter-chip" data-filter="interest" type="button">Interest</button>
+    </div>
+
+    <div id="records-list" class="records-list"></div>
+    <p id="records-empty" class="records-empty">No records found.</p>
+  </div>
+
+  <nav class="app-tabbar records-tabbar">
+    <button class="tab-btn" data-go="home" type="button">
+      <i class="fa-solid fa-house"></i>
+      <span>HOME</span>
+    </button>
+    <button class="tab-btn" data-go="add" type="button">
+      <i class="fa-solid fa-user-plus"></i>
+      <span>ADD</span>
+    </button>
+    <button class="tab-btn" data-go="members" type="button">
+      <i class="fa-solid fa-list"></i>
+      <span>MEMBERS</span>
+    </button>
+    <button class="tab-btn is-current" data-go="records" type="button">
+      <i class="fa-solid fa-file-lines"></i>
+      <span>RECORDS</span>
+    </button>
+    <button class="tab-btn" data-go="account" type="button">
+      <i class="fa-solid fa-wallet"></i>
+      <span>ACCOUNT</span>
+    </button>
+  </nav>
+</section>
+
+<template id="record-card-template">
+  <article class="record-card">
+    <div class="record-icon"><i></i></div>
+    <div class="record-main">
+      <p class="record-name"></p>
+      <p class="record-type"></p>
+      <p class="record-date"><i class="fa-regular fa-calendar"></i><span></span></p>
+    </div>
+    <div class="record-side">
+      <p class="record-amount"></p>
+      <i class="fa-solid fa-chevron-right"></i>
+    </div>
+  </article>
+</template>
+
+<section id="askSavioPage">
+  <header class="ai-page-header">
+    <button class="ai-back closeSavio"><i class="fa-solid fa-arrow-left"></i></button>
+    <div class="ai-page-title">
+      <div class="savio-ai-avatar small" id="chatAvatar"><i class="fa-solid fa-robot"></i></div>
+      <div>
+        <p class="ai-page-name" id="chatPageName">Ask SAVIO</p>
+        <p class="ai-page-sub" id="chatPageSub">Your group's financial assistant</p>
+      </div>
+    </div>
+  </header>
+  <div id="aiModeSwitch" class="ai-mode-switch">
+    <button class="ai-mode-btn is-active" data-mode="savio" type="button"><i class="fa-solid fa-robot"></i>SAVIO AI</button>
+    <button class="ai-mode-btn" data-mode="gemini" type="button"><i class="fa-solid fa-star-of-life"></i>Gemini</button>
+  </div>
+  <div id="chatMessages" class="chat-messages"></div>
+  <form id="chatForm" class="chat-input-row">
+    <input id="chatInput" type="text" placeholder="Ask about savings, loans, members..." autocomplete="off">
+    <button type="submit" id="chatSend"><i class="fa-solid fa-paper-plane"></i></button>
+  </form>
+</section>
+
+<section id="groupReportPage">
+  <header class="ai-page-header">
+    <button class="ai-back closeReport"><i class="fa-solid fa-arrow-left"></i></button>
+    <div class="ai-page-title">
+      <div class="savio-ai-avatar small"><i class="fa-solid fa-file-invoice"></i></div>
+      <div>
+        <p class="ai-page-name">Group Report</p>
+        <p class="ai-page-sub">AI-generated financial summary</p>
+      </div>
+    </div>
+  </header>
+  <div id="reportBody" class="report-body">
+    <p class="report-loading">Generating report...</p>
+  </div>
+  <button id="regenReport" class="regen-report-btn"><i class="fa-solid fa-arrows-rotate"></i>Regenerate</button>
+</section>
+
+<script src="js/index.js"></script>
+</body>
+</html>
