@@ -2,3 +2,5 @@ fastapi
 uvicorn[standard]
 pydantic
 google-genai
+psycopg2
+python-dotenv
