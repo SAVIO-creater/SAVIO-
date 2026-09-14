@@ -20,13 +20,23 @@ That covers "savngs", "how mch john save", "totl loan", "who nt deposited".
 from __future__ import annotations
 
 import math
+import os
 import re
 import sqlite3
 import unicodedata
-from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Iterable
+from typing import Any
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
+try:
+    import psycopg2
+    from psycopg2.extras import DictCursor
+    PSYCOPG2_AVAILABLE = True
+except ImportError:
+    psycopg2 = None
+    DictCursor = None
+    PSYCOPG2_AVAILABLE = False
 
 
 # ---------------------------------------------------------------------------
@@ -865,80 +875,226 @@ def change_and_pct(new: Any, old: Any) -> dict[str, Any]:
 
 # ---------------------------------------------------------------------------
 # Database snapshot used by both understanding and math
+# Works with SQLite files and PostgreSQL/Supabase via DATABASE_URL.
 # ---------------------------------------------------------------------------
 
-def _conn(db_path: str) -> sqlite3.Connection:
-    connection = sqlite3.connect(db_path)
+SQLITE_FALLBACK_PATH = "SAVIO-database/SAVIO.db"
+
+
+def _env_database_url() -> str | None:
+    return os.getenv("DATABASE_URL") or os.getenv("SUPABASE_DB_URL")
+
+
+def _looks_like_dsn(value: str | None) -> bool:
+    if not value:
+        return False
+    lowered = value.strip().lower()
+    return lowered.startswith(("postgresql://", "postgres://", "postgresql+psycopg2://"))
+
+
+def _resolve_target(db_path: str | None = None) -> str:
+    """Explicit path/URL wins. Otherwise DATABASE_URL, else local SQLite."""
+    if db_path:
+        return db_path
+    return _env_database_url() or SQLITE_FALLBACK_PATH
+
+
+def _is_postgres(db_path: str | None) -> bool:
+    """True for a Postgres URL argument, or when env points at Postgres and no file path was given."""
+    if _looks_like_dsn(db_path):
+        return True
+    if db_path:
+        return False
+    return _looks_like_dsn(_env_database_url())
+
+
+def _postgres_url(url: str) -> str:
+    """Normalize a Supabase / Postgres URL so psycopg2 can connect over SSL."""
+    if not url:
+        return url
+    if url.startswith("postgresql+psycopg2://"):
+        url = "postgresql://" + url[len("postgresql+psycopg2://"):]
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    parsed = urlparse(url)
+    query = parse_qs(parsed.query)
+    if "sslmode" not in query:
+        query["sslmode"] = ["require"]
+    return urlunparse(parsed._replace(query=urlencode(query, doseq=True)))
+
+
+def _sql(query: str, postgres: bool) -> str:
+    """SQLite uses ? placeholders; PostgreSQL uses %s. Do not rewrite other SQL."""
+    if postgres:
+        return query.replace("?", "%s")
+    return query
+
+
+def _execute(cursor, postgres: bool, query: str, params=None):
+    """Run a query with the placeholder style of the active engine."""
+    adapted = _sql(query, postgres)
+    if params is None:
+        return cursor.execute(adapted)
+    return cursor.execute(adapted, params)
+
+
+def _first_value(row: Any) -> Any:
+    """Works for tuples, sqlite3.Row and psycopg2 DictRow."""
+    if row is None:
+        return None
+    try:
+        return row[0]
+    except (KeyError, IndexError, TypeError):
+        if isinstance(row, dict):
+            return next(iter(row.values()))
+        return row
+
+
+def _row_id(row: Any) -> Any:
+    """Member id from a DictCursor / sqlite3.Row / tuple row."""
+    try:
+        return row["id"]
+    except (KeyError, TypeError, IndexError):
+        return _first_value(row)
+
+
+def _conn(db_path: str | None = None):
+    target = _resolve_target(db_path)
+    if _is_postgres(target):
+        url = target if _looks_like_dsn(target) else _env_database_url()
+        if not url:
+            raise RuntimeError("PostgreSQL database URL is not configured.")
+        if not PSYCOPG2_AVAILABLE:
+            raise RuntimeError("psycopg2 is required for PostgreSQL. Install psycopg2-binary.")
+        return psycopg2.connect(_postgres_url(url), cursor_factory=DictCursor)
+
+    sqlite_path = target or SQLITE_FALLBACK_PATH
+    parent = os.path.dirname(sqlite_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    connection = sqlite3.connect(sqlite_path)
     connection.row_factory = sqlite3.Row
     return connection
 
 
-def load_snapshot(db_path: str = "SAVIO-database/SAVIO.db") -> dict[str, Any]:
-    connection = _conn(db_path)
-    cur = connection.cursor()
+def load_snapshot(db_path: str | None = None) -> dict[str, Any]:
+    """
+    Read members, loans, welfare, fines, payments and deposits.
 
-    cur.execute(
-        "SELECT id, firstname, surname, number, surety, deposite, status FROM members"
-    )
-    members = []
-    for row in cur.fetchall():
-        members.append({
-            "id": row["id"],
-            "firstname": row["firstname"] or "",
-            "surname": row["surname"] or "",
-            "name": f"{(row['firstname'] or '').strip()} {(row['surname'] or '').strip()}".strip(),
-            "number": row["number"] or "",
-            "surety": row["surety"] or "",
-            "savings": ugx(row["deposite"]),
-            "status": row["status"] or "",
-        })
+    db_path may be:
+      * a PostgreSQL/Supabase URL
+      * a SQLite filesystem path
+      * None → DATABASE_URL / SUPABASE_DB_URL, else local SQLite
+    """
+    target = _resolve_target(db_path)
+    postgres = _is_postgres(target)
+    connection = _conn(target)
+    try:
+        cur = connection.cursor()
 
-    cur.execute("SELECT member_id, amount, interest FROM loan")
-    loans = {row["member_id"]: {"principal": ugx(row["amount"]), "rate": float(row["interest"] or 0)} for row in cur.fetchall()}
-
-    cur.execute("SELECT member_id, COALESCE(SUM(amount),0) AS total FROM welfare GROUP BY member_id")
-    welfare = {row["member_id"]: ugx(row["total"]) for row in cur.fetchall()}
-
-    cur.execute("SELECT member_id, COALESCE(SUM(amount),0) AS total FROM fine GROUP BY member_id")
-    fines = {row["member_id"]: ugx(row["total"]) for row in cur.fetchall()}
-
-    cur.execute("SELECT member_id, COALESCE(SUM(payment),0) AS total FROM payment GROUP BY member_id")
-    payments = {row["member_id"]: ugx(row["total"]) for row in cur.fetchall()}
-
-    cur.execute("SELECT COALESCE(SUM(amount),0) FROM deposit")
-    total_savings = ugx(cur.fetchone()[0])
-
-    cur.execute("SELECT COALESCE(SUM(amount),0) FROM welfare")
-    total_welfare = ugx(cur.fetchone()[0])
-
-    cur.execute("SELECT COALESCE(SUM(amount),0) FROM fine")
-    total_fines = ugx(cur.fetchone()[0])
-
-    cur.execute("SELECT COALESCE(SUM(payment),0) FROM payment")
-    total_payments = ugx(cur.fetchone()[0])
-
-    now = datetime.now()
-    week_start = (now - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
-    last_week_start = (now - timedelta(days=14)).strftime("%Y-%m-%d %H:%M:%S")
-    cur.execute("SELECT COALESCE(SUM(amount),0) FROM deposit WHERE created_at >= ?", (week_start,))
-    this_week = ugx(cur.fetchone()[0])
-    cur.execute(
-        "SELECT COALESCE(SUM(amount),0) FROM deposit WHERE created_at >= ? AND created_at < ?",
-        (last_week_start, week_start),
-    )
-    last_week = ugx(cur.fetchone()[0])
-
-    weekly = []
-    for i in range(3, -1, -1):
-        start = (now - timedelta(days=7 * (i + 1))).strftime("%Y-%m-%d %H:%M:%S")
-        end = (now - timedelta(days=7 * i)).strftime("%Y-%m-%d %H:%M:%S")
-        cur.execute(
-            "SELECT COALESCE(SUM(amount),0) FROM deposit WHERE created_at >= ? AND created_at < ?",
-            (start, end),
+        _execute(
+            cur,
+            postgres,
+            "SELECT id, firstname, surname, number, surety, deposite, status FROM members",
         )
-        weekly.append(ugx(cur.fetchone()[0]))
+        members = []
+        for row in cur.fetchall():
+            members.append({
+                "id": row["id"],
+                "firstname": row["firstname"] or "",
+                "surname": row["surname"] or "",
+                "name": f"{(row['firstname'] or '').strip()} {(row['surname'] or '').strip()}".strip(),
+                "number": row["number"] or "",
+                "surety": row["surety"] or "",
+                "savings": ugx(row["deposite"]),
+                "status": row["status"] or "",
+            })
 
-    connection.close()
+        _execute(cur, postgres, "SELECT member_id, amount, interest FROM loan")
+        loans = {
+            row["member_id"]: {
+                "principal": ugx(row["amount"]),
+                "rate": float(row["interest"] or 0),
+            }
+            for row in cur.fetchall()
+        }
+
+        _execute(
+            cur,
+            postgres,
+            "SELECT member_id, COALESCE(SUM(amount),0) AS total FROM welfare GROUP BY member_id",
+        )
+        welfare = {row["member_id"]: ugx(row["total"]) for row in cur.fetchall()}
+
+        _execute(
+            cur,
+            postgres,
+            "SELECT member_id, COALESCE(SUM(amount),0) AS total FROM fine GROUP BY member_id",
+        )
+        fines = {row["member_id"]: ugx(row["total"]) for row in cur.fetchall()}
+
+        _execute(
+            cur,
+            postgres,
+            "SELECT member_id, COALESCE(SUM(payment),0) AS total FROM payment GROUP BY member_id",
+        )
+        payments = {row["member_id"]: ugx(row["total"]) for row in cur.fetchall()}
+
+        _execute(cur, postgres, "SELECT COALESCE(SUM(amount),0) FROM deposit")
+        total_savings = ugx(_first_value(cur.fetchone()))
+
+        _execute(cur, postgres, "SELECT COALESCE(SUM(amount),0) FROM welfare")
+        total_welfare = ugx(_first_value(cur.fetchone()))
+
+        _execute(cur, postgres, "SELECT COALESCE(SUM(amount),0) FROM fine")
+        total_fines = ugx(_first_value(cur.fetchone()))
+
+        _execute(cur, postgres, "SELECT COALESCE(SUM(payment),0) FROM payment")
+        total_payments = ugx(_first_value(cur.fetchone()))
+
+        now = datetime.now()
+        week_start = now - timedelta(days=7)
+        last_week_start = now - timedelta(days=14)
+
+        _execute(
+            cur,
+            postgres,
+            "SELECT COALESCE(SUM(amount),0) FROM deposit WHERE created_at >= ?",
+            (week_start,),
+        )
+        this_week = ugx(_first_value(cur.fetchone()))
+        _execute(
+            cur,
+            postgres,
+            "SELECT COALESCE(SUM(amount),0) FROM deposit WHERE created_at >= ? AND created_at < ?",
+            (last_week_start, week_start),
+        )
+        last_week = ugx(_first_value(cur.fetchone()))
+
+        weekly = []
+        for i in range(3, -1, -1):
+            start = now - timedelta(days=7 * (i + 1))
+            end = now - timedelta(days=7 * i)
+            _execute(
+                cur,
+                postgres,
+                "SELECT COALESCE(SUM(amount),0) FROM deposit WHERE created_at >= ? AND created_at < ?",
+                (start, end),
+            )
+            weekly.append(ugx(_first_value(cur.fetchone())))
+
+        _execute(
+            cur,
+            postgres,
+            """
+            SELECT id FROM members
+            WHERE id NOT IN (SELECT member_id FROM deposit WHERE created_at >= ?)
+            """,
+            (week_start,),
+        )
+        inactive_ids = {_row_id(row) for row in cur.fetchall()}
+    finally:
+        connection.close()
 
     total_loan_principal = 0
     total_interest_money = 0
@@ -979,19 +1135,6 @@ def load_snapshot(db_path: str = "SAVIO-database/SAVIO.db") -> dict[str, Any]:
     else:
         exposure_label = "high"
 
-    inactive_ids = set()
-    connection = _conn(db_path)
-    cur = connection.cursor()
-    cur.execute(
-        """
-        SELECT id FROM members
-        WHERE id NOT IN (SELECT member_id FROM deposit WHERE created_at >= ?)
-        """,
-        (week_start,),
-    )
-    inactive_ids = {row[0] for row in cur.fetchall()}
-    connection.close()
-
     for item in enriched:
         item["inactive_7d"] = item["id"] in inactive_ids
 
@@ -1023,6 +1166,49 @@ def load_snapshot(db_path: str = "SAVIO-database/SAVIO.db") -> dict[str, Any]:
 
 def format_ugx(value: Any) -> str:
     return f"UGX {ugx(value):,}"
+
+
+def verify_database(db_path: str | None = None) -> dict[str, Any]:
+    """
+    Compact compatibility check: connect, read members/savings/loans,
+    build a snapshot, and confirm interest math stays in Python.
+    Does not call Gemini and does not print secrets.
+    """
+    target = _resolve_target(db_path)
+    engine = "postgresql" if _is_postgres(target) else "sqlite"
+    connection = _conn(target)
+    try:
+        cur = connection.cursor()
+        _execute(cur, engine == "postgresql", "SELECT id, firstname, surname, deposite FROM members")
+        members = cur.fetchall()
+        _execute(cur, engine == "postgresql", "SELECT COALESCE(SUM(amount), 0) FROM deposit")
+        savings_sum = ugx(_first_value(cur.fetchone()))
+        _execute(cur, engine == "postgresql", "SELECT member_id, amount, interest FROM loan")
+        loans = cur.fetchall()
+    finally:
+        connection.close()
+
+    snapshot = load_snapshot(target)
+    sample_interest = interest_on(10000, 10)
+    sample_total = amount_with_interest(10000, 10)
+    return {
+        "ok": True,
+        "engine": engine,
+        "member_count": len(members),
+        "savings_readable": True,
+        "savings_total": savings_sum,
+        "loan_rows": len(loans),
+        "snapshot_members": len(snapshot.get("members") or []),
+        "snapshot_savings": snapshot["totals"]["savings"],
+        "interest_math": {
+            "formula": "interest = principal * rate / 100; total = principal + interest",
+            "example_principal": 10000,
+            "example_rate": 10,
+            "example_interest": sample_interest,
+            "example_total": sample_total,
+            "correct": sample_interest == 1000 and sample_total == 11000,
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1537,7 +1723,7 @@ class Understanding:
 
 def understand_question(
     question: str,
-    db_path: str = "SAVIO-database/SAVIO.db",
+    db_path: str | None = None,
     snapshot: dict[str, Any] | None = None,
 ) -> Understanding:
     norm = normalize_question(question or "")
@@ -1733,6 +1919,17 @@ def local_reply(u: Understanding) -> str:
         # Do not dump internal notes to the user.
         pass
     return text
+
+
+if __name__ == "__main__":
+    result = verify_database()
+    # Never print connection URLs or keys.
+    print("engine:", result.get("engine"))
+    print("ok:", result.get("ok"))
+    print("members:", result.get("member_count"))
+    print("savings:", result.get("savings_total"))
+    print("loans:", result.get("loan_rows"))
+    print("interest_math:", result.get("interest_math"))
 
 
 # End of SAVIO_brain.py
