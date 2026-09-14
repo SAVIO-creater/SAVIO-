@@ -101,7 +101,14 @@ def get_ai_client():
     return _gemini_client
 
 #AUTO DATABASE CREATION
-os.makedirs("SAVIO-database", exist_ok=True)
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not set")
+
+
+def get_connection():
+    return psycopg2.connect(DATABASE_URL)
 
 SAVIO = FastAPI()
 
@@ -234,7 +241,7 @@ class AskRequest(BaseModel):
 
 
 def get_connection():
-    return sqlite3.connect("SAVIO-database/SAVIO.db")
+    return psycopg2.connect(DATABASE_URL)
 
 
 #COMMUNICATION DECK
@@ -244,16 +251,19 @@ def adding_member(member: Member):
     cursor = connection.cursor()
 
     cursor.execute("""
-        INSERT INTO members (firstname, surname, number, surety, deposite, status)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (
-        member.firstname,
-        member.surname,
-        member.number,
-        member.surety,
-        member.deposite,
-        member.status
-    ))
+    INSERT INTO members (firstname, surname, number, surety, deposite, status)
+    VALUES (%s, %s, %s, %s, %s, %s)
+    RETURNING id
+""", (
+    member.firstname,
+    member.surname,
+    member.number,
+    member.surety,
+    member.deposite,
+    member.status
+))
+
+member_id = cursor.fetchone()[0]
 
     member_id = cursor.lastrowid
 
@@ -279,12 +289,12 @@ def deposit(member_id: int, deposit: Deposit):
     cursor = connection.cursor()
 
     cursor.execute("""
-        INSERT INTO deposit (member_id, amount, created_at)
-        VALUES (?, ?, datetime('now','localtime'))
-    """, (
-        member_id,
-        deposit.amount
-    ))
+    INSERT INTO deposit (member_id, amount, created_at)
+    VALUES (%s, %s, CURRENT_TIMESTAMP)
+""", (
+    member_id,
+    member.deposite
+))
     cursor.execute("""
         UPDATE members SET deposite = deposite + ? WHERE id = ?
     """, (
